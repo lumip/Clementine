@@ -442,6 +442,18 @@ bool Transcoder::StartJob(const Job& job) {
 
   emit LogLine(tr("Starting %1").arg(QDir::toNativeSeparators(job.input)));
 
+  // Check whether input file exists - log an error and quit, if not
+  if (!(QFileInfo(job.input).exists())) {
+    qLog(Error) << QString("Input file does not exist: %1").arg(job.input);
+    return false;
+  }
+
+  // Check whether path to output exists - log an error and quit, if not
+  if (!(QFileInfo(job.output).dir().exists())) {
+    qLog(Error) << QString("Path to output does not exist: %1").arg(job.output);
+    return false;
+  }
+
   // Create the pipeline.
   // This should be a scoped_ptr, but scoped_ptr doesn't support custom
   // destructors.
