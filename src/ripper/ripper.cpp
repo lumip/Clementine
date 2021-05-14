@@ -18,6 +18,7 @@
 #include "ripper.h"
 
 #include <QFile>
+#include <QDir>
 #include <QMutexLocker>
 #include <QtConcurrentRun>
 
@@ -135,7 +136,7 @@ void Ripper::TranscodingJobComplete(const QString& input, const QString& output,
     finished_failed_++;
   UpdateProgress();
 
-  // The the transcoder does not overwrite files. Instead, it changes
+  // The transcoder does not overwrite files. Instead, it changes
   // the name of the output file. We need to update the transcoded
   // filename for the corresponding track so that we tag the correct
   // file later on.
@@ -246,6 +247,8 @@ void Ripper::Rip() {
     }
     finished_success_++;
     UpdateProgress();
+
+    QFileInfo(it->transcoded_filename).dir().mkpath("."); // create output path if it doesn't exist
 
     it->temporary_filename = filename;
     transcoder_->AddJob(it->temporary_filename, it->preset,
