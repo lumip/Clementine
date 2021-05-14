@@ -253,7 +253,9 @@ void RipCDDialog::SetupProgressBarLimits(int min, int max) {
 }
 
 void RipCDDialog::UpdateProgressBar(int progress) {
-  ui_->progress_bar->setValue(progress);
+  if (working_) {
+    ui_->progress_bar->setValue(progress);
+  }
 }
 
 void RipCDDialog::BuildTrackListTable(const SongList& songs) {

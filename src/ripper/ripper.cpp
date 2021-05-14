@@ -42,8 +42,8 @@ Ripper::Ripper(QObject* parent)
     : QObject(parent),
       transcoder_(new Transcoder(this)),
       cancel_requested_(false),
-      finished_success_(0),
-      finished_failed_(0),
+      transcoding_active_(false),
+      progress_(0),
       files_tagged_(0) {
   cdio_ = cdio_open(NULL, DRIVER_UNKNOWN);
 
@@ -121,6 +121,7 @@ void Ripper::Cancel() {
   {
     QMutexLocker l(&mutex_);
     cancel_requested_ = true;
+    transcoding_active_ = false;
   }
   transcoder_->Cancel();
   RemoveTemporaryDirectory();
@@ -129,25 +130,32 @@ void Ripper::Cancel() {
 
 void Ripper::TranscodingJobComplete(const QString& input, const QString& output,
                                     bool success) {
-  if (success)
-    finished_success_++;
-  else
-    finished_failed_++;
-  UpdateProgress();
+  if (success) {
+    progress_.finished_success++;
+  } else {
+    progress_.finished_failed++;
+  }
 
   // The the transcoder does not overwrite files. Instead, it changes
   // the name of the output file. We need to update the transcoded
   // filename for the corresponding track so that we tag the correct
   // file later on.
-  for (QList<TrackInformation>::iterator it = tracks_.begin();
-       it != tracks_.end(); ++it) {
-    if (it->temporary_filename == input) {
-      it->transcoded_filename = output;
+  for (int track_id = 0; track_id < tracks_.size(); ++track_id) {
+    TrackInformation& track = tracks_[track_id];
+    if (track.temporary_filename == input) {
+      track.transcoded_filename = output;
+
+      // Additionally ensure that we set the progress tracker for the track to 1.
+      QMutexLocker l(&(progress_.mutex));
+      progress_.per_track_transcoding_progress[track_id] = 1.f;
     }
   }
+  UpdateTranscodingProgress();
 }
 
 void Ripper::AllTranscodingJobsComplete() {
+  QMutexLocker l(&mutex_);
+  transcoding_active_ = false;
   RemoveTemporaryDirectory();
   TagFiles();
 }
@@ -208,14 +216,13 @@ void Ripper::Rip() {
   }
 
   temporary_directory_ = Utilities::MakeTempDir() + "/";
-  finished_success_ = 0;
-  finished_failed_ = 0;
 
-  // Set up progress bar
-  UpdateProgress();
-
+  int track_no = 0;
   for (QList<TrackInformation>::iterator it = tracks_.begin();
        it != tracks_.end(); ++it) {
+
+    bool track_success = true;
+
     QString filename =
         QString("%1%2.wav").arg(temporary_directory_).arg(it->track_number);
     QFile destination_file(filename);
@@ -241,17 +248,28 @@ void Ripper::Rip() {
                                buffered_input_bytes.size());
       } else {
         qLog(Error) << "CD read error";
+        track_success = false;
         break;
       }
+
+      UpdateRippingProgress(track_no, i_first_lsn, i_last_lsn, i_cursor);
     }
-    finished_success_++;
-    UpdateProgress();
+
+    UpdateRippingProgress(track_no, i_first_lsn, i_last_lsn, i_last_lsn);
+    track_no++;
+    if (track_success) {
+      progress_.finished_success++;
+    } else {
+      progress_.finished_failed--;
+    }
 
     it->temporary_filename = filename;
     transcoder_->AddJob(it->temporary_filename, it->preset,
                         it->transcoded_filename);
   }
   transcoder_->Start();
+  transcoding_active_ = true;
+  QtConcurrent::run(this, &Ripper::PollTranscodingProgress);
   emit(RippingComplete());
 }
 
@@ -260,17 +278,71 @@ void Ripper::Rip() {
 // to the transcoding.
 void Ripper::SetupProgressInterval() {
   int max = AddedTracks() * 2 * 100;
+  progress_ = RippingProgress(AddedTracks());
   emit ProgressInterval(0, max);
+  emit Progress(0);
 }
 
-void Ripper::UpdateProgress() {
-  int progress = (finished_success_ + finished_failed_) * 100;
-  QMap<QString, float> current_jobs = transcoder_->GetProgress();
-  for (float value : current_jobs.values()) {
-    progress += qBound(0, static_cast<int>(value * 100), 99);
+void Ripper::UpdateRippingProgress(int track_id, int track_start, int track_end, int track_cursor) {
+  float job_progress = static_cast<float>(track_cursor - track_start) / static_cast<float>(track_end - track_start);
+
+  if (static_cast<int>(job_progress * 100) - static_cast<int>(progress_.per_track_ripping_progress[track_id] * 100) < 1) {
+    return;
   }
-  emit Progress(progress);
-  qLog(Debug) << "Progress:" << progress;
+  progress_.per_track_ripping_progress[track_id] = job_progress;
+
+  int progress = 0;
+  for (float track_progress : progress_.per_track_ripping_progress) {
+    progress += qBound(0, static_cast<int>(track_progress * 100), 100);
+  }
+  for (float track_progress : progress_.per_track_transcoding_progress) {
+    progress += qBound(0, static_cast<int>(track_progress * 100), 100);
+  }
+
+  QMutexLocker l(&(progress_.mutex));
+  if (progress > progress_.current_progress) {
+    progress_.current_progress = progress;
+    emit Progress(progress);
+  }
+}
+
+void Ripper::UpdateTranscodingProgress() {
+  
+  int progress = 0;
+  for (float track_progress : progress_.per_track_ripping_progress) {
+    progress += qBound(0, static_cast<int>(track_progress * 100), 100);
+  }
+
+  QMap<QString, float> current_jobs = transcoder_->GetProgress();
+
+  QMutexLocker l(&(progress_.mutex));
+  for (int i = 0; i < tracks_.length(); ++i) {
+    TrackInformation& track = tracks_[i];
+    if (current_jobs.contains(track.temporary_filename)) {
+      float value = current_jobs[track.temporary_filename];
+      progress_.per_track_transcoding_progress[i] = value;
+    } 
+  }
+
+  for (float track_progress : progress_.per_track_transcoding_progress) {
+    progress += qBound(0, static_cast<int>(track_progress * 100), 100);
+  }
+
+  if (progress > progress_.current_progress) {
+    progress_.current_progress = progress;
+    emit Progress(progress);
+  }
+}
+
+void Ripper::PollTranscodingProgress() {
+  const int TRANSCODING_POLLING_INTERVAL_MS = 500;
+
+  forever {
+    QThread::msleep(TRANSCODING_POLLING_INTERVAL_MS);
+    UpdateTranscodingProgress();
+    QMutexLocker l(&mutex_);
+    if (!transcoding_active_) break;
+  }
 }
 
 void Ripper::RemoveTemporaryDirectory() {
@@ -310,4 +382,42 @@ void Ripper::FileTagged(TagReaderReply* reply) {
   }
 
   reply->deleteLater();
+}
+
+Ripper::RippingProgress::RippingProgress(int num_tracks) noexcept
+  : current_progress(0),
+    finished_success(0),
+    finished_failed(0),
+    per_track_ripping_progress(num_tracks),
+    per_track_transcoding_progress(num_tracks),
+    mutex()
+{ }
+
+Ripper::RippingProgress::RippingProgress(const RippingProgress& other) noexcept
+  : current_progress(other.current_progress),
+    finished_success(other.finished_success),
+    finished_failed(other.finished_failed),
+    per_track_ripping_progress(other.per_track_ripping_progress),
+    per_track_transcoding_progress(other.per_track_transcoding_progress),
+    mutex()
+{ }
+
+Ripper::RippingProgress::RippingProgress(RippingProgress&& other) noexcept
+  : RippingProgress(0) {
+  swap(other);
+}
+
+void Ripper::RippingProgress::swap(RippingProgress& other) noexcept {
+  QMutexLocker ownLock(&mutex);
+  QMutexLocker otherLock(&(other.mutex));
+  std::swap(current_progress, other.current_progress);
+  std::swap(finished_success, other.finished_success);
+  std::swap(finished_failed, other.finished_failed);
+  std::swap(per_track_ripping_progress, other.per_track_ripping_progress);
+  std::swap(per_track_transcoding_progress, other.per_track_transcoding_progress);
+}
+
+Ripper::RippingProgress& Ripper::RippingProgress::operator=(Ripper::RippingProgress other) noexcept {
+  swap(other);
+  return *this;
 }

@@ -22,6 +22,7 @@
 
 #include <QMutex>
 #include <QObject>
+#include <QVector>
 
 #include "core/song.h"
 #include "core/tagreaderclient.h"
@@ -111,20 +112,45 @@ class Ripper : public QObject {
     Song::FileType type;
   };
 
+
+  struct RippingProgress {
+    RippingProgress(int num_tracks) noexcept;
+    RippingProgress(const RippingProgress& other) noexcept;
+    RippingProgress(RippingProgress&& other) noexcept;
+
+    void swap(RippingProgress& other) noexcept;
+    RippingProgress& operator=(RippingProgress other) noexcept;
+
+    int current_progress;
+    int finished_success;
+    int finished_failed;
+    QVector<float> per_track_ripping_progress;
+    QVector<float> per_track_transcoding_progress;
+    QMutex mutex;
+  };
+
   void WriteWAVHeader(QFile* stream, int32_t i_bytecount);
   void Rip();
+  // Emits min and max values for the progress interval as well as a current progress of 0.
   void SetupProgressInterval();
-  void UpdateProgress();
+
   void RemoveTemporaryDirectory();
   void TagFiles();
+
+  // Updates progress for initial ripping of a track from the disc.
+  void UpdateRippingProgress(int jobId, int jobStart, int jobEnd, int jobCurrent);
+  // Updates progress of transcoder.
+  void UpdateTranscodingProgress();
+  // Periodically polls progress from transcoder by invoking UpdateTranscodingProgress.
+  void PollTranscodingProgress();
 
   CdIo_t* cdio_;
   Transcoder* transcoder_;
   QString temporary_directory_;
   bool cancel_requested_;
+  bool transcoding_active_;
   QMutex mutex_;
-  int finished_success_;
-  int finished_failed_;
+  RippingProgress progress_;
   int files_tagged_;
   QList<TrackInformation> tracks_;
   AlbumInformation album_;
