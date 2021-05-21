@@ -61,6 +61,8 @@ class CddaSongLoader : public QObject {
  private:
   QUrl GetUrlFromTrack(int track_number) const;
   void LoadSongsFromCdda();
+  // Parse gstreamer taglist for a song
+  bool ParseSongTags(SongList& songs, GstTagList* tags);
 
   QUrl url_;
   GstElement* cdda_;

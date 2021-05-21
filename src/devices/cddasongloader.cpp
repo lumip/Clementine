@@ -60,12 +60,82 @@ void CddaSongLoader::LoadSongs() {
   }
 }
 
+bool CddaSongLoader::ParseSongTags(SongList& songs, GstTagList* tags) {
+  //// cdiocddasrc reads cd-text with following mapping from cdio
+  ///
+  /// DISC LEVEL :
+  /// CDTEXT_FIELD_PERFORMER -> GST_TAG_ALBUM_ARTIST
+  /// CDTEXT_FIELD_TITLE -> GST_TAG_ALBUM
+  /// CDTEXT_FIELD_GENRE -> GST_TAG_GENRE
+  ///
+  /// TRACK LEVEL :
+  /// CDTEXT_FIELD_PERFORMER -> GST_TAG_ARTIST
+  /// CDTEXT_FIELD_TITLE -> GST_TAG_TITLE
+
+  guint track_number;
+  if (!gst_tag_list_get_uint(tags, GST_TAG_TRACK_NUMBER, &track_number)) {
+    qLog(Error) << "Track tags do not contain track number!";
+    return false;
+  }
+
+  Q_ASSERT(track_number != 0u);
+  Q_ASSERT(static_cast<int>(track_number) <= songs.size());
+  Song& song = songs[static_cast<int>(track_number - 1)];
+
+  qLog(Debug) << gst_tag_list_to_string(tags);
+
+  bool has_loaded_tags = false;
+
+  gchar* buffer = nullptr;
+  if (gst_tag_list_get_string(tags, GST_TAG_ALBUM, &buffer)) {
+    has_loaded_tags = true;
+    song.set_album(QString::fromUtf8(buffer));
+    g_free(buffer);
+  }
+
+  if (gst_tag_list_get_string(tags, GST_TAG_ALBUM_ARTIST, &buffer)) {
+    has_loaded_tags = true;
+    song.set_albumartist(QString::fromUtf8(buffer));
+    g_free(buffer);
+  }
+
+  if (gst_tag_list_get_string(tags, GST_TAG_GENRE, &buffer)) {
+    has_loaded_tags = true;
+    song.set_genre(QString::fromUtf8(buffer));
+    g_free(buffer);
+  }
+
+  if (gst_tag_list_get_string(tags, GST_TAG_ARTIST, &buffer)) {
+    has_loaded_tags = true;
+    song.set_artist(QString::fromUtf8(buffer));
+    g_free(buffer);
+  }
+
+  if (gst_tag_list_get_string(tags, GST_TAG_TITLE, &buffer)) {
+    has_loaded_tags = true;
+    song.set_title(QString::fromUtf8(buffer));
+    g_free(buffer);
+  }
+
+  guint64 duration;
+  if (gst_tag_list_get_uint64(tags, GST_TAG_DURATION, &duration)) {
+    has_loaded_tags = true;
+    song.set_length_nanosec(duration);
+  }
+
+  song.set_track(track_number);
+  song.set_id(track_number);
+  song.set_filetype(Song::Type_Cdda);
+  song.set_valid(true);
+  song.set_url(GetUrlFromTrack(track_number));
+  return has_loaded_tags;
+}
+
 void CddaSongLoader::LoadSongsFromCdda() {
   if (!may_load_) return;
-
   // Create gstreamer cdda element
   GError* error = nullptr;
-  cdda_ = gst_element_make_from_uri(GST_URI_SRC, "cdda://", nullptr, &error);
+  GstElement* cdda_ = gst_element_factory_make("cdiocddasrc", nullptr);
   if (error) {
     qLog(Error) << error->code << QString::fromLocal8Bit(error->message);
   }
@@ -93,17 +163,15 @@ void CddaSongLoader::LoadSongsFromCdda() {
   }
 
   // Get number of tracks
-  GstFormat fmt = gst_format_get_by_nick("track");
-  GstFormat out_fmt = fmt;
+  GstFormat track_fmt = gst_format_get_by_nick("track");
   gint64 num_tracks = 0;
-  if (!gst_element_query_duration(cdda_, out_fmt, &num_tracks) ||
-      out_fmt != fmt) {
-    qLog(Error) << "Error while querying cdda GstElement";
+  if (!gst_element_query_duration(cdda_, track_fmt, &num_tracks)) {
+    qLog(Error) << "Error while querying cdda GstElement for track count";
     gst_object_unref(GST_OBJECT(cdda_));
     return;
   }
 
-  SongList songs;
+  SongList initial_song_list;
   for (int track_number = 1; track_number <= num_tracks; track_number++) {
     // Init song
     Song song;
@@ -113,9 +181,11 @@ void CddaSongLoader::LoadSongsFromCdda() {
     song.set_url(GetUrlFromTrack(track_number));
     song.set_title(QString("Track %1").arg(track_number));
     song.set_track(track_number);
-    songs << song;
+    initial_song_list << song;
   }
-  emit SongsLoaded(songs);
+  emit SongsLoaded(initial_song_list);
+
+  SongList tagged_song_list(initial_song_list);
 
   gst_tag_register_musicbrainz_tags();
 
@@ -131,6 +201,7 @@ void CddaSongLoader::LoadSongsFromCdda() {
   GstMessageType msg_filter =
       static_cast<GstMessageType>(GST_MESSAGE_TOC | GST_MESSAGE_TAG);
   QString musicbrainz_discid;
+  bool loaded_cd_tags;
   while (may_load_ && msg_filter &&
          (msg = gst_bus_timed_pop_filtered(GST_ELEMENT_BUS(pipeline),
                                            10 * GST_SECOND, msg_filter))) {
@@ -140,7 +211,7 @@ void CddaSongLoader::LoadSongsFromCdda() {
       gst_message_parse_toc(msg, &toc, nullptr);
       if (toc) {
         GList* entries = gst_toc_get_entries(toc);
-        if (entries && songs.size() <= g_list_length(entries)) {
+        if (entries && initial_song_list.size() <= g_list_length(entries)) {
           int i = 0;
           for (GList* node = entries; node != nullptr; node = node->next) {
             GstTocEntry* entry = static_cast<GstTocEntry*>(node->data);
@@ -148,35 +219,57 @@ void CddaSongLoader::LoadSongsFromCdda() {
             gint64 start, stop;
             if (gst_toc_entry_get_start_stop_times(entry, &start, &stop))
               duration = stop - start;
-            songs[i++].set_length_nanosec(duration);
+            initial_song_list[i++].set_length_nanosec(duration);
           }
-          emit SongsDurationLoaded(songs);
+          emit SongsDurationLoaded(initial_song_list);
           msg_filter = static_cast<GstMessageType>(
               static_cast<int>(msg_filter) ^ GST_MESSAGE_TOC);
         }
         gst_toc_unref(toc);
       }
     } else if (GST_MESSAGE_TYPE(msg) == GST_MESSAGE_TAG) {
-      // Handle TAG message: generate MusicBrainz DiscId
+      // Handle TAG message: generate MusicBrainz DiscId and read CD-TEXT if
+      // present
 
       GstTagList* tags = nullptr;
       gst_message_parse_tag(msg, &tags);
       char* string_mb = nullptr;
-      if (gst_tag_list_get_string(tags, GST_TAG_CDDA_MUSICBRAINZ_DISCID,
+      if (musicbrainz_discid.isEmpty() &&
+          gst_tag_list_get_string(tags, GST_TAG_CDDA_MUSICBRAINZ_DISCID,
                                   &string_mb)) {
-        QString musicbrainz_discid = QString::fromUtf8(string_mb);
+        musicbrainz_discid = QString::fromUtf8(string_mb);
         g_free(string_mb);
-
         qLog(Info) << "MusicBrainz discid: " << musicbrainz_discid;
-        emit MusicBrainzDiscIdLoaded(musicbrainz_discid);
+        // emit MusicBrainzDiscIdLoaded(musicbrainz_discid);
+        // for now, we'll invoke musicbrainz only after having read all CD-TEXT
+        // tags and emitted a message for it
+      }
+
+      loaded_cd_tags |= ParseSongTags(tagged_song_list, tags);
+      gst_tag_list_free(tags);
+
+      gint64 track_number;
+      gst_element_query_position(cdda_, track_fmt, &track_number);
+      track_number += 1;
+      if (track_number < num_tracks) {
+        // more to go, seek to next track to get a tag message for it
+        gst_element_seek_simple(
+            pipeline, track_fmt,
+            static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH |
+                                      GST_SEEK_FLAG_TRICKMODE),
+            track_number);
+      } else  // we are done with reading track tags: do no longer filter
         msg_filter = static_cast<GstMessageType>(static_cast<int>(msg_filter) ^
                                                  GST_MESSAGE_TAG);
-      }
-      gst_tag_list_free(tags);
     }
     gst_message_unref(msg);
   }
+  if (loaded_cd_tags) emit SongsMetadataLoaded(tagged_song_list);
 
+  if (!musicbrainz_discid.isEmpty())
+    emit MusicBrainzDiscIdLoaded(musicbrainz_discid);
+
+  // cleanup
   gst_element_set_state(pipeline, GST_STATE_NULL);
   // This will also cause cdda_ to be unref'd.
   gst_object_unref(pipeline);
