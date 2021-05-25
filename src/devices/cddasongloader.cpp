@@ -1,5 +1,6 @@
 /* This file is part of Clementine.
    Copyright 2014, David Sansome <me@davidsansome.com>
+   Copyright 2021, Lukas Prediger <lumip@lumip.de>
 
    Clementine is free software: you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -27,9 +28,21 @@
 #include "core/timeconstants.h"
 
 CddaSongLoader::CddaSongLoader(const QUrl& url, QObject* parent)
-    : QObject(parent), url_(url), cdda_(nullptr), may_load_(true) {
-  connect(this, SIGNAL(MusicBrainzDiscIdLoaded(const QString&)),
-          SLOT(LoadAudioCDTags(const QString&)));
+    : QObject(parent), url_(url), cdda_(nullptr), may_load_(true), disc_() {
+  connect(this, &CddaSongLoader::MusicBrainzDiscIdLoaded, this,
+          &CddaSongLoader::LoadAudioCDTags);
+  connect(this, &CddaSongLoader::SongsLoaded,
+          [this](const SongList& song_list) {
+            SetDiscTracks(song_list, /*has_titles=*/false);
+          });
+  connect(this, &CddaSongLoader::SongsDurationLoaded,
+          [this](const SongList& song_list) {
+            SetDiscTracks(song_list, /*has_titles=*/false);
+          });
+  connect(this, &CddaSongLoader::SongsMetadataLoaded,
+          [this](const SongList& song_list) {
+            SetDiscTracks(song_list, /*has_titles=*/true);
+          });
 }
 
 CddaSongLoader::~CddaSongLoader() {
@@ -55,6 +68,7 @@ bool CddaSongLoader::IsActive() const { return loading_future_.isRunning(); }
 void CddaSongLoader::LoadSongs() {
   // only dispatch a new thread for loading tracks if not already running.
   if (!IsActive()) {
+    disc_ = Disc();
     loading_future_ =
         QtConcurrent::run(this, &CddaSongLoader::LoadSongsFromCdda);
   }
@@ -280,36 +294,46 @@ void CddaSongLoader::LoadAudioCDTags(const QString& musicbrainz_discid) const {
   connect(musicbrainz_client,
           SIGNAL(Finished(const QString&, const QString&,
                           MusicBrainzClient::ResultList)),
-          SLOT(AudioCDTagsLoaded(const QString&, const QString&,
-                                 MusicBrainzClient::ResultList)));
+          SLOT(ProcessMusicBrainzResponse(const QString&, const QString&,
+                                          MusicBrainzClient::ResultList)));
 
   musicbrainz_client->StartDiscIdRequest(musicbrainz_discid);
 }
 
-void CddaSongLoader::AudioCDTagsLoaded(
+void CddaSongLoader::ProcessMusicBrainzResponse(
     const QString& artist, const QString& album,
     const MusicBrainzClient::ResultList& results) {
   MusicBrainzClient* musicbrainz_client =
       qobject_cast<MusicBrainzClient*>(sender());
   musicbrainz_client->deleteLater();
-  SongList songs;
   if (results.empty()) return;
-  int track_number = 1;
-  for (const MusicBrainzClient::Result& ret : results) {
-    Song song;
-    song.set_artist(artist);
-    song.set_album(album);
-    song.set_title(ret.title_);
-    song.set_length_nanosec(ret.duration_msec_ * kNsecPerMsec);
-    song.set_track(track_number);
-    song.set_year(ret.year_);
-    song.set_id(track_number);
-    song.set_filetype(Song::Type_Cdda);
-    song.set_valid(true);
-    // We need to set url: that's how playlist will find the correct item to
-    // update
-    song.set_url(GetUrlFromTrack(track_number++));
-    songs << song;
+
+  if (disc_.tracks.length() != results.length()) {
+    qLog(Warning) << "Number of tracks in metadata does not match number of "
+                     "songs on disc!";
+    return;  // no idea how to recover; just do nothing
   }
-  emit SongsMetadataLoaded(songs);
+
+  for (int i = 0; i < results.length(); ++i) {
+    const MusicBrainzClient::Result& new_song_info = results[i];
+    Song& song = disc_.tracks[i];
+
+    if (!disc_.has_titles) song.set_title(new_song_info.title_);
+    if (song.album().isEmpty()) song.set_album(album);
+    if (song.artist().isEmpty()) song.set_artist(artist);
+
+    if (song.length_nanosec() == -1)
+      song.set_length_nanosec(new_song_info.duration_msec_ * kNsecPerMsec);
+    if (song.track() < 1) song.set_track(new_song_info.track_);
+    if (song.year() == -1) song.set_year(new_song_info.year_);
+  }
+  disc_.has_titles = true;
+
+  emit SongsUpdated(disc_.tracks);
+}
+
+void CddaSongLoader::SetDiscTracks(const SongList& songs, bool has_titles) {
+  disc_.tracks = songs;
+  disc_.has_titles = has_titles;
+  emit SongsUpdated(disc_.tracks);
 }
