@@ -73,7 +73,7 @@ class CddaDevice : public ConnectedDevice {
   void DiscChanged();
 
  private slots:
-  void SongsLoaded(const SongList& songs);
+  void SongsLoaded(const SongList& songs, bool further_updates_possible);
   void CheckDiscChanged();
 
  private:

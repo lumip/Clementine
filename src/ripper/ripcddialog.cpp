@@ -298,10 +298,10 @@ void RipCDDialog::DeviceSelected(int device_index) {
   loader_ = cdda_device_->loader();
   Q_ASSERT(loader_);
 
-  connect(loader_, SIGNAL(SongsUpdated(SongList)),
-          SLOT(BuildTrackListTable(SongList)));
-  connect(loader_, SIGNAL(SongsUpdated(SongList)),
-          SLOT(SetAlbumMetadata(SongList)));
+  connect(loader_, SIGNAL(SongsUpdated(SongList, bool)),
+          SLOT(BuildTrackListTable(SongList, bool)));
+  connect(loader_, SIGNAL(SongsUpdated(SongList, bool)),
+          SLOT(SetAlbumMetadata(SongList, bool)));
 
   // load songs from new SongLoader
   loader_->LoadSongs();
@@ -326,7 +326,8 @@ void RipCDDialog::UpdateProgressBar(int progress) {
   ui_->progress_bar->setValue(progress);
 }
 
-void RipCDDialog::BuildTrackListTable(const SongList& songs) {
+void RipCDDialog::BuildTrackListTable(const SongList& songs,
+                                      bool further_updates_possible) {
   checkboxes_.clear();
   track_names_.clear();
 
@@ -350,7 +351,8 @@ void RipCDDialog::BuildTrackListTable(const SongList& songs) {
   }
 }
 
-void RipCDDialog::SetAlbumMetadata(const SongList& songs) {
+void RipCDDialog::SetAlbumMetadata(const SongList& songs,
+                                   bool further_updates_possible) {
   Q_ASSERT(songs.length() > 0);
 
   const Song& song = songs.first();

@@ -282,6 +282,9 @@ void CddaSongLoader::LoadSongsFromCdda() {
 
   if (!musicbrainz_discid.isEmpty())
     emit MusicBrainzDiscIdLoaded(musicbrainz_discid);
+  else SongsUpdated(tagged_song_list, false);
+  // The else ensures that SongsUpdated with further_updates_possible=false is emitted in all cases.
+  // We use tagged_song_list as the most up-to-date list of tracks we have.
 
   // cleanup
   gst_element_set_state(pipeline, GST_STATE_NULL);
@@ -306,12 +309,20 @@ void CddaSongLoader::ProcessMusicBrainzResponse(
   MusicBrainzClient* musicbrainz_client =
       qobject_cast<MusicBrainzClient*>(sender());
   musicbrainz_client->deleteLater();
-  if (results.empty()) return;
+  if (results.empty()) {
+    // no real update, but we have to signal that
+    // no further updates will follow now
+    emit SongsUpdated(disc_.tracks, false);
+    return;
+  }
 
   if (disc_.tracks.length() != results.length()) {
     qLog(Warning) << "Number of tracks in metadata does not match number of "
                      "songs on disc!";
-    return;  // no idea how to recover; just do nothing
+    // no idea how to recover; but we have to signal that
+    // no further updates will follow now
+    emit SongsUpdated(disc_.tracks, false);
+    return; 
   }
 
   for (int i = 0; i < results.length(); ++i) {
@@ -329,11 +340,11 @@ void CddaSongLoader::ProcessMusicBrainzResponse(
   }
   disc_.has_titles = true;
 
-  emit SongsUpdated(disc_.tracks);
+  emit SongsUpdated(disc_.tracks, false);
 }
 
 void CddaSongLoader::SetDiscTracks(const SongList& songs, bool has_titles) {
   disc_.tracks = songs;
   disc_.has_titles = has_titles;
-  emit SongsUpdated(disc_.tracks);
+  emit SongsUpdated(disc_.tracks, true);
 }
