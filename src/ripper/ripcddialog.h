@@ -29,7 +29,6 @@ class QCloseEvent;
 class QLineEdit;
 class QShowEvent;
 
-class CddaSongLoader;
 class Ripper;
 class Ui_RipCDDialog;
 class CddaDevice;
@@ -62,10 +61,9 @@ class RipCDDialog : public QDialog {
   void UpdateProgressBar(int progress);
   // Initializes track list table based on preliminary song list with durations
   // but without metadata.
-  void BuildTrackListTable(const SongList& songs,
-                           bool further_updates_possible);
+  void BuildTrackListTable(const SongList& songs);
   // Update album information with metadata.
-  void SetAlbumMetadata(const SongList& songs, bool further_updates_possible);
+  void SetAlbumMetadata(const SongList& songs);
   void DiscChanged();
 
  private:
@@ -93,6 +91,5 @@ class RipCDDialog : public QDialog {
   QList<DeviceInfo*> cdda_devices_;
   bool working_;
   std::shared_ptr<CddaDevice> cdda_device_;
-  CddaSongLoader* loader_;
 };
 #endif  // SRC_RIPPER_RIPCDDIALOG_H_

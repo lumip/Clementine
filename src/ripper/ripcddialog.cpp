@@ -61,8 +61,7 @@ RipCDDialog::RipCDDialog(DeviceManager* device_manager, QWidget* parent)
       cdda_devices_(
           device_manager->FindDevicesByUrlSchemes(CddaDevice::url_schemes())),
       working_(false),
-      cdda_device_(),
-      loader_(nullptr) {
+      cdda_device_() {
   Q_ASSERT(device_manager);
   // Init
   ui_->setupUi(this);
@@ -270,8 +269,7 @@ void RipCDDialog::InvertSelection() {
 }
 
 void RipCDDialog::DeviceSelected(int device_index) {
-  // disconnecting from previous loader and device, if any
-  if (loader_) disconnect(loader_, nullptr, this, nullptr);
+  // disconnecting from previous device, if any
   if (cdda_device_) disconnect(cdda_device_.get(), nullptr, this, nullptr);
 
   ResetDialog();
@@ -293,18 +291,12 @@ void RipCDDialog::DeviceSelected(int device_index) {
   }
 
   connect(cdda_device_.get(), SIGNAL(DiscChanged()), SLOT(DiscChanged()));
+  connect(cdda_device_.get(), SIGNAL(SongsDiscovered(SongList)),
+          SLOT(BuildTrackListTable(SongList)));
+  connect(cdda_device_.get(), SIGNAL(SongsDiscovered(SongList)),
+          SLOT(SetAlbumMetadata(SongList)));
+  cdda_device_->LoadSongs();
 
-  // get SongLoader from device and connect signals
-  loader_ = cdda_device_->loader();
-  Q_ASSERT(loader_);
-
-  connect(loader_, SIGNAL(SongsUpdated(SongList, bool)),
-          SLOT(BuildTrackListTable(SongList, bool)));
-  connect(loader_, SIGNAL(SongsUpdated(SongList, bool)),
-          SLOT(SetAlbumMetadata(SongList, bool)));
-
-  // load songs from new SongLoader
-  loader_->LoadSongs();
   rip_button_->setEnabled(true);
 }
 
@@ -326,8 +318,7 @@ void RipCDDialog::UpdateProgressBar(int progress) {
   ui_->progress_bar->setValue(progress);
 }
 
-void RipCDDialog::BuildTrackListTable(const SongList& songs,
-                                      bool further_updates_possible) {
+void RipCDDialog::BuildTrackListTable(const SongList& songs) {
   checkboxes_.clear();
   track_names_.clear();
 
@@ -351,9 +342,8 @@ void RipCDDialog::BuildTrackListTable(const SongList& songs,
   }
 }
 
-void RipCDDialog::SetAlbumMetadata(const SongList& songs,
-                                   bool further_updates_possible) {
-  Q_ASSERT(songs.length() > 0);
+void RipCDDialog::SetAlbumMetadata(const SongList& songs) {
+  if (songs.length() <= 0) return;
 
   const Song& song = songs.first();
   ui_->albumLineEdit->setText(song.album());

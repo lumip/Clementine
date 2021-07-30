@@ -282,9 +282,11 @@ void CddaSongLoader::LoadSongsFromCdda() {
 
   if (!musicbrainz_discid.isEmpty())
     emit MusicBrainzDiscIdLoaded(musicbrainz_discid);
-  else SongsUpdated(tagged_song_list, false);
-  // The else ensures that SongsUpdated with further_updates_possible=false is emitted in all cases.
-  // We use tagged_song_list as the most up-to-date list of tracks we have.
+  else
+    SongsUpdated(tagged_song_list, false);
+  // The else ensures that SongsUpdated with further_updates_possible=false is
+  // emitted in all cases. We use tagged_song_list as the most up-to-date list
+  // of tracks we have.
 
   // cleanup
   gst_element_set_state(pipeline, GST_STATE_NULL);
@@ -322,7 +324,7 @@ void CddaSongLoader::ProcessMusicBrainzResponse(
     // no idea how to recover; but we have to signal that
     // no further updates will follow now
     emit SongsUpdated(disc_.tracks, false);
-    return; 
+    return;
   }
 
   for (int i = 0; i < results.length(); ++i) {
