@@ -350,3 +350,5 @@ void CddaSongLoader::SetDiscTracks(const SongList& songs, bool has_titles) {
   disc_.has_titles = has_titles;
   emit SongsUpdated(disc_.tracks, true);
 }
+
+SongList CddaSongLoader::chached_tracks() const { return disc_.tracks; }

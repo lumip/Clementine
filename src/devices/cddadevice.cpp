@@ -50,7 +50,7 @@ bool CddaDevice::Init() {
   if (!cdio_) {
     cdio_ = cdio_open(url_.path().toLocal8Bit().constData(), DRIVER_DEVICE);
     if (!cdio_) return false;
-    LoadSongs();
+    ForceLoadSongs();
     WatchForDiscChanges(true);
   }
   return true;
@@ -69,13 +69,18 @@ void CddaDevice::WatchForDiscChanges(bool watch) {
     disc_changed_timer_.stop();
 }
 
-void CddaDevice::LoadSongs() { cdda_song_loader_.LoadSongs(); }
+void CddaDevice::ForceLoadSongs() { cdda_song_loader_.LoadSongs(); }
+
+void CddaDevice::LoadSongs() {
+  SongList songs = cdda_song_loader_.chached_tracks();
+  SongsLoaded(songs, false);
+}
 
 void CddaDevice::SongsLoaded(const SongList& songs,
                              bool further_updates_possible) {
   model_->Reset();
-  emit SongsDiscovered(songs);
   song_count_ = songs.size();
+  emit SongsDiscovered(songs);
 }
 
 void CddaDevice::CheckDiscChanged() {
@@ -90,6 +95,6 @@ void CddaDevice::CheckDiscChanged() {
     song_count_ = 0;
     SongList no_songs;
     SongsLoaded(no_songs, false);
-    LoadSongs();
+    ForceLoadSongs();
   }
 }
