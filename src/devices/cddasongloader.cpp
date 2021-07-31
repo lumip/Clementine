@@ -215,7 +215,7 @@ void CddaSongLoader::LoadSongsFromCdda() {
   GstMessageType msg_filter =
       static_cast<GstMessageType>(GST_MESSAGE_TOC | GST_MESSAGE_TAG);
   QString musicbrainz_discid;
-  bool loaded_cd_tags;
+  bool loaded_cd_tags = false;
   while (may_load_ && msg_filter &&
          (msg = gst_bus_timed_pop_filtered(GST_ELEMENT_BUS(pipeline),
                                            10 * GST_SECOND, msg_filter))) {
