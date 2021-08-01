@@ -32,8 +32,8 @@ CddaDevice::CddaDevice(const QUrl& url, DeviceLister* lister,
       cdio_(nullptr),
       disc_changed_timer_(),
       cdda_song_loader_(url) {
-  connect(&cdda_song_loader_, SIGNAL(SongsUpdated(SongList, bool)), this,
-          SLOT(SongsLoaded(SongList, bool)));
+  connect(&cdda_song_loader_, SIGNAL(SongsUpdated(SongList)), this,
+          SLOT(SongsLoaded(SongList)));
   connect(this, SIGNAL(SongsDiscovered(SongList)), model_,
           SLOT(SongsDiscovered(SongList)));
   connect(&disc_changed_timer_, SIGNAL(timeout()), SLOT(CheckDiscChanged()));
@@ -73,11 +73,10 @@ void CddaDevice::ForceLoadSongs() { cdda_song_loader_.LoadSongs(); }
 
 void CddaDevice::LoadSongs() {
   SongList songs = cdda_song_loader_.chached_tracks();
-  SongsLoaded(songs, false);
+  SongsLoaded(songs);
 }
 
-void CddaDevice::SongsLoaded(const SongList& songs,
-                             bool further_updates_possible) {
+void CddaDevice::SongsLoaded(const SongList& songs) {
   model_->Reset();
   song_count_ = songs.size();
   emit SongsDiscovered(songs);
@@ -94,7 +93,7 @@ void CddaDevice::CheckDiscChanged() {
     emit DiscChanged();
     song_count_ = 0;
     SongList no_songs;
-    SongsLoaded(no_songs, false);
+    SongsLoaded(no_songs);
     ForceLoadSongs();
   }
 }

@@ -87,8 +87,7 @@ class SongLoader : public QObject {
   void Timeout();
   void StopTypefind();
 #ifdef HAVE_AUDIOCD
-  void AudioCDTracksLoadedSlot(const SongList& songs,
-                               bool further_updates_possible);
+  void AudioCDTracksLoadedSlot(const SongList& songs);
 #endif  // HAVE_AUDIOCD
 
  private:
