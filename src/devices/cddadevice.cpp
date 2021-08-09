@@ -77,7 +77,7 @@ void CddaDevice::ForceLoadSongs() {
 }
 
 void CddaDevice::LoadSongs() {
-  SongList songs = cdda_song_loader_.chached_tracks();
+  SongList songs = cdda_song_loader_.cached_tracks();
   SongsLoaded(songs);
 }
 
