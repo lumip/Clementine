@@ -290,12 +290,15 @@ void RipCDDialog::DeviceSelected(int device_index) {
     return;
   }
 
+  SongList songs = cdda_device_->songs();
+  BuildTrackListTable(songs);
+  SetAlbumMetadata(songs);
+
   connect(cdda_device_.get(), SIGNAL(DiscChanged()), SLOT(DiscChanged()));
   connect(cdda_device_.get(), SIGNAL(SongsDiscovered(SongList)),
           SLOT(BuildTrackListTable(SongList)));
   connect(cdda_device_.get(), SIGNAL(SongsDiscovered(SongList)),
           SLOT(SetAlbumMetadata(SongList)));
-  cdda_device_->LoadSongs();
 
   rip_button_->setEnabled(true);
 }
