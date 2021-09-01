@@ -80,13 +80,19 @@ void CddaDevice::SongsLoaded(const SongList& songs) {
   model_->Reset();
   song_count_ = songs.size();
   emit SongsDiscovered(songs);
+  // When a disc is inserted, cdio_get_media_changed will
+  // return true for two times with a bit of delay in between
+  // (at least on linux).
+  // We clear cdio_get_media_changed after songs are
+  // loaded, so we don't potentially re-read the same disc.terminal
+  // There's a slight chance that this hides an actual
+  // media change, but this should be rare enough to not
+  // be a problem in practice and is easily rectified
+  // by user cycling the disc once more.
+  cdio_get_media_changed(cdio_);
 }
 
 void CddaDevice::SongsLoadingFinished() {
-  // Ensure that cdio_get_media_changed is cleared
-  // after songs are loaded, so we don't potentially
-  // re-read the same disc.
-  cdio_get_media_changed(cdio_);
   disc_changed_timer_.start();
 }
 
